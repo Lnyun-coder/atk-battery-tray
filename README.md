@@ -2,6 +2,8 @@
 
 # atk-battery-tray
 
+[![Release](https://img.shields.io/github/v/release/Lnyun-coder/atk-battery-tray)](https://github.com/Lnyun-coder/atk-battery-tray/releases)
+
 **ATK 游戏鼠标电量托盘显示插件**
 
 在任务栏托盘里显示鼠标电量百分比，**独立运行，不需要 ATK HUB**
