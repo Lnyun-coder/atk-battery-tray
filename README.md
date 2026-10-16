@@ -62,12 +62,6 @@ ATK 官方驱动 **ATK HUB 后台占用较高**，而我只想在任务栏瞄一
 git clone https://github.com/Lnyun-coder/atk-battery-tray.git
 cd atk-battery-tray
 
-### 让图标显示在任务栏（不在「^」折叠菜单里）
-
-Windows 默认会把新图标放进折叠菜单。手动设置一次即可，之后一直生效：
-
-**设置 → 个性化 → 任务栏 → 其他系统托盘图标 → 找到「ATK 鼠标电量」→ 打开**
-
 ## 使用
 
 | 操作 | 效果 |
