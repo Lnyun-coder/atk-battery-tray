@@ -6,14 +6,14 @@
 
 在任务栏托盘里显示鼠标电量百分比，**独立运行，不需要 ATK HUB**
 
-<img src="docs/icon_final_state.png" width="720" alt="各种电量下的托盘图标" />
+<img src="icon_final_state.png" width="720" alt="各种电量下的托盘图标" />
 
 <sub>从左到右：89% / 55% / 41% / 40% / 25% / 20% / 19% / 5% / 未连接</sub>
 
 <details>
 <summary>另两种图标样式（源码里保留，可通过 <code>LOCK_STYLE</code> 切换）</summary>
 
-<img src="docs/styles.png" width="720" alt="三种图标样式对比" />
+<img src="styles.png" width="720" alt="三种图标样式对比" />
 
 </details>
 
@@ -101,7 +101,10 @@ atk-battery-tray/
 ├── ATKBattery.exe            # 可选的专用托盘宿主（见下方说明）
 ├── ATKBattery.exe.manifest   # exe 的清单（asInvoker）
 ├── TrayHost.cs               # ATKBattery.exe 的 C# 源码
-├── docs/                     # 截图
+├── CAPTURE.md                # 抓包重现指南（换设备时用）
+├── icon_final_state.png      # 图标预览
+├── styles.png                # 三种样式对比
+├── battery-capsule.png       # 电池胶囊样式
 └── LICENSE
 ```
 
@@ -164,7 +167,7 @@ Usage Page `0xFF05`，输入/输出报告各 64 字节，Report ID `0x08`。
 - `r[7]` = 电量百分比（0–100）
 - `r[8]` = 充电标志
 
-重现抓包的完整脚本和步骤见 [`docs/CAPTURE.md`](docs/CAPTURE.md)。
+重现抓包的完整脚本和步骤见 [CAPTURE.md](CAPTURE.md)。
 
 ## 已知限制
 
@@ -196,7 +199,7 @@ Usage Page `0xFF05`，输入/输出报告各 64 字节，Report ID `0x08`。
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File "atk-tray.ps1" -DryRun
    ```
-2. 如果读不到，按 [`docs/CAPTURE.md`](docs/CAPTURE.md) 抓一次包，把新帧告诉我。
+2. 如果读不到，按 [CAPTURE.md](CAPTURE.md) 抓一次包，把新帧告诉我。
 
 ## 开源协议
 
