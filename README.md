@@ -45,23 +45,22 @@ ATK 官方驱动 **ATK HUB 后台占用较高**，而我只想在任务栏瞄一
 
 需要 **Windows 10 / 11** 和 **PowerShell 5.1**（系统自带，无需安装）。
 
+### 方式一：下载压缩包（推荐）
+
+去 [**Releases**](https://github.com/Lnyun-coder/atk-battery-tray/releases/latest) 下载：
+
+| 文件 | 说明 |
+| --- | --- |
+| `atk-battery-tray-v1.0.0.zip` | 完整版，含可选的托盘宿主 `ATKBattery.exe` |
+| `atk-battery-tray-v1.0.0-lite.zip` | 轻量版，纯脚本 |
+
+解压到**任意目录**（路径可以含中文），然后**双击 `START.cmd`**。
+
+### 方式二：克隆仓库
+
 ```powershell
 git clone https://github.com/Lnyun-coder/atk-battery-tray.git
 cd atk-battery-tray
-```
-
-双击 **`启动插件.cmd`** 即可。
-
-<details>
-<summary>也可以直接用命令行启动</summary>
-
-```powershell
-powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "atk-tray.ps1"
-```
-
-想放桌面快捷方式的话：右键 `启动插件.cmd` → 发送到 → 桌面快捷方式。
-
-</details>
 
 ### 让图标显示在任务栏（不在「^」折叠菜单里）
 
