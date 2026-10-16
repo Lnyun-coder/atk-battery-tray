@@ -51,8 +51,8 @@ ATK 官方驱动 **ATK HUB 后台占用较高**，而我只想在任务栏瞄一
 
 | 文件 | 说明 |
 | --- | --- |
-| `atk-battery-tray-v1.0.0.zip` | 完整版，含可选的托盘宿主 `ATKBattery.exe` |
-| `atk-battery-tray-v1.0.0-lite.zip` | 轻量版，纯脚本 |
+| `atk-battery-tray-v1.0.1.zip` | 完整版，含可选的托盘宿主 `ATKBattery.exe` |
+| `atk-battery-tray-v1.0.1-lite.zip` | 轻量版，纯脚本 |
 
 解压到**任意目录**（路径可以含中文），然后**双击 `START.cmd`**。
 
@@ -61,6 +61,28 @@ ATK 官方驱动 **ATK HUB 后台占用较高**，而我只想在任务栏瞄一
 ```powershell
 git clone https://github.com/Lnyun-coder/atk-battery-tray.git
 cd atk-battery-tray
+```
+
+然后**双击 `启动插件.cmd`**（和压缩包里的 `START.cmd` 是同一个启动器，只是文件名不同）。
+
+<details>
+<summary>也可以直接用命令行启动</summary>
+
+```powershell
+powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "atk-tray.ps1"
+```
+
+想放桌面快捷方式的话：右键启动器（`START.cmd` 或 `启动插件.cmd`）→ 发送到 → 桌面快捷方式。
+
+</details>
+
+> 首次启动若被 SmartScreen 拦下 → **更多信息 → 仍要运行**（脚本无代码签名，正常现象）。
+
+### 让图标显示在任务栏（不在「^」折叠菜单里）
+
+Windows 默认会把新图标放进折叠菜单。手动设置一次即可，之后一直生效：
+
+**设置 → 个性化 → 任务栏 → 其他系统托盘图标 → 找到「ATK 鼠标电量」→ 打开**
 
 ## 使用
 
