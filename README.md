@@ -44,7 +44,7 @@ ATK 官方驱动 **ATK HUB 后台占用较高**，而我只想在任务栏瞄一
 需要 **Windows 10 / 11** 和 **PowerShell 5.1**（系统自带，无需安装）。
 
 ```powershell
-git clone https://github.com/<你的用户名>/atk-battery-tray.git
+git clone https://github.com/<Lnyun>/atk-battery-tray.git
 cd atk-battery-tray
 ```
 
