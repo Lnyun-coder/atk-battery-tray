@@ -1,6 +1,6 @@
 @echo off
-rem ATK Battery Tray launcher
-rem Double-click to start
+rem ATK Battery Tray launcher - double-click to start
+rem Shows startup messages briefly, then closes.
 cd /d "%~dp0"
-start "" /min powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0atk-tray.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0atk-tray.ps1" -LauncherMode
 exit /b 0

@@ -19,6 +19,7 @@
 param(
     [int]$IntervalSeconds = 12,
     [switch]$AllowMulti,
+    [switch]$LauncherMode,
     [switch]$TestMenu,
     [switch]$DryRun,
     [switch]$VerboseLog
@@ -62,7 +63,14 @@ public static class AtkSingleInstance
 "@
     }
     if (-not [AtkSingleInstance]::Acquire()) {
-        Write-Host 'ATK 电量插件已在运行，本次启动退出。' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  ATK 电量插件已经在运行了。' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  请看任务栏右下角的圆环电量图标。' -ForegroundColor Gray
+        Write-Host '  如果看不到，可能是被收进了「^」折叠菜单：' -ForegroundColor Gray
+        Write-Host '    设置 - 个性化 - 任务栏 - 其他系统托盘图标 - 打开「ATK 鼠标电量」' -ForegroundColor Gray
+        Write-Host ''
+        if ($LauncherMode) { Start-Sleep -Seconds 4 }
         exit 0
     }
 }
@@ -1150,6 +1158,14 @@ for ($i = 0; $i -lt 50; $i++) {
 Update-Tray
 
 Invoke-Safe 'STARTUP' { Write-ErrLog 'STARTUP' "插件启动 pid=$PID" }
+if ($LauncherMode) {
+    # 双击启动时给个反馈，避免"到底起没起来"的疑惑
+    Invoke-Safe 'BALLOON' {
+        $notify.BalloonTipTitle = 'ATK 电量插件'
+        $notify.BalloonTipText = '已启动，图标在任务栏右下角'
+        $notify.ShowBalloonTip(3000)
+    }
+}
 if ($VerboseLog) { Write-Host "托盘插件已启动（后台进程读电量，UI 不阻塞）。右键菜单可退出。" -ForegroundColor Cyan }
 
 [System.Windows.Forms.Application]::Run()
