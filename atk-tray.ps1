@@ -11,13 +11,13 @@
     用法:
         powershell -NoProfile -ExecutionPolicy Bypass -File atk-battery-tray.ps1
     参数:
-        -IntervalSeconds <int>   刷新间隔秒数，默认 60
+        -IntervalSeconds <int>   刷新间隔秒数，默认 5
         -DryRun                  只读一次电量并打印，不创建托盘图标（排错用）
         -VerboseLog              在控制台输出每次读取结果
 #>
 [CmdletBinding()]
 param(
-    [int]$IntervalSeconds = 12,
+    [int]$IntervalSeconds = 5,
     [switch]$AllowMulti,
     [switch]$LauncherMode,
     [switch]$TestMenu,
@@ -932,7 +932,10 @@ function Invoke-Safe {
 }
 
 $notify = New-Object System.Windows.Forms.NotifyIcon
-$notify.Visible = $true
+# 先不显示！图标要等菜单和初始化全部就绪后再显示。
+# 否则图标已出现、菜单还没绑上（中间有 200 多行初始化代码，开机时可能几秒），
+# 这期间右键会弹出空白菜单 —— 这是之前"菜单空白"的根因。
+$notify.Visible = $false
 $notify.Icon = New-BatteryIcon -Battery -1 -Charging $false -Unknown $true
 $notify.Text = 'ATK 鼠标电量：正在读取…'
 
@@ -1040,7 +1043,7 @@ function Start-Worker {
     try {
         $script:workerProc = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList @(
             '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-            '-File', $script:WorkerScript, '-IntervalSeconds', [string]([Math]::Max(10, $IntervalSeconds))
+            '-File', $script:WorkerScript, '-IntervalSeconds', [string]([Math]::Max(3, $IntervalSeconds))
         )
     } catch { $script:workerProc = $null }
 }
@@ -1156,6 +1159,12 @@ for ($i = 0; $i -lt 50; $i++) {
     if ($script:lastTs -gt 0 -or (Test-Path $script:StatusFile)) { break }
 }
 Update-Tray
+
+# ---------------------------------------------------------------------------
+# 初始化全部完成（菜单已绑、worker 已起、首次数据已读）→ 现在才显示图标
+# 这样用户任何时刻右键都能看到完整菜单，图标一出现就是正确电量
+# ---------------------------------------------------------------------------
+Invoke-Safe 'SHOW-ICON' { $notify.Visible = $true }
 
 Invoke-Safe 'STARTUP' { Write-ErrLog 'STARTUP' "插件启动 pid=$PID" }
 if ($LauncherMode) {

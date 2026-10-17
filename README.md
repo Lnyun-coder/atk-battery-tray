@@ -2,8 +2,6 @@
 
 # atk-battery-tray
 
-[![Release](https://img.shields.io/github/v/release/Lnyun-coder/atk-battery-tray)](https://github.com/Lnyun-coder/atk-battery-tray/releases)
-
 **ATK 游戏鼠标电量托盘显示插件**
 
 在任务栏托盘里显示鼠标电量百分比，**独立运行，不需要 ATK HUB**
@@ -51,8 +49,8 @@ ATK 官方驱动 **ATK HUB 后台占用较高**，而我只想在任务栏瞄一
 
 | 文件 | 说明 |
 | --- | --- |
-| `atk-battery-tray-v1.0.1.zip` | 完整版，含可选的托盘宿主 `ATKBattery.exe` |
-| `atk-battery-tray-v1.0.1-lite.zip` | 轻量版，纯脚本 |
+| `atk-battery-tray-v1.0.2.zip` | 完整版，含可选的托盘宿主 `ATKBattery.exe` |
+| `atk-battery-tray-v1.0.2-lite.zip` | 轻量版，纯脚本 |
 
 解压到**任意目录**（路径可以含中文），然后**双击 `START.cmd`**。
 
@@ -96,15 +94,15 @@ Windows 默认会把新图标放进折叠菜单。手动设置一次即可，之
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `-IntervalSeconds <n>` | `12` | 后台读电量的间隔（秒）。想更灵敏可设 5，想更省资源可设 30 |
+| `-IntervalSeconds <n>` | `5` | 后台读电量的间隔（秒）。想更省资源可设 30 |
 | `-DryRun` | — | 只读一次并打印结果，不启动托盘（用于验证） |
 | `-VerboseLog` | — | 在控制台输出每次刷新的日志 |
 | `-TestMenu` | — | 菜单自检：打印菜单项并弹出菜单 10 秒 |
 | `-AllowMulti` | — | 跳过多实例检查（仅调试用） |
 
 ```powershell
-# 让电量变化更灵敏（约 5 秒延迟）
-powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "atk-tray.ps1" -IntervalSeconds 5
+# 让电量变化更慢/更省资源
+powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "atk-tray.ps1" -IntervalSeconds 30
 ```
 
 ## 目录结构
@@ -113,15 +111,15 @@ powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "atk-tra
 atk-battery-tray/
 ├── atk-tray.ps1              # 插件本体：托盘 UI + 协议实现（主程序）
 ├── atk-worker.ps1            # 后台读取进程：HID 通信，结果写入 status.txt
-├── 启动插件.cmd               # 双击启动
+├── 启动插件.cmd               # 双击启动（发布包里叫 START.cmd）
+├── restart.cmd               # 一键干净重启（结束残留进程 + 清状态 + 启动）
+├── watchdog.cmd              # 守护模式启动器
+├── watchdog.ps1              # 守护脚本：每 30 秒检查，托盘挂了自动拉起
 ├── test-menu.cmd             # 菜单自检工具
 ├── ATKBattery.exe            # 可选的专用托盘宿主（见下方说明）
 ├── ATKBattery.exe.manifest   # exe 的清单（asInvoker）
 ├── TrayHost.cs               # ATKBattery.exe 的 C# 源码
-├── CAPTURE.md                # 抓包重现指南（换设备时用）
-├── icon_final_state.png      # 图标预览
-├── styles.png                # 三种样式对比
-├── battery-capsule.png       # 电池胶囊样式
+├── 快速上手.txt               # 新手说明（发布包内叫 README-FIRST.txt）
 └── LICENSE
 ```
 
@@ -135,12 +133,22 @@ C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe ^
   /out:ATKBattery.exe /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll TrayHost.cs
 ```
 
+## 遇到问题怎么办
+
+| 现象 | 处理 |
+| --- | --- |
+| 电量显示不对 / 和官方驱动不一致 | 双击 **`restart.cmd`**（结束残留进程 + 清状态 + 重启） |
+| 图标突然消失了 | 双击 **`restart.cmd`**，或用 **`watchdog.cmd`** 启动守护模式自动恢复 |
+| 开机后右键菜单空白 | v1.0.2 已修复（图标改为初始化完成后才显示） |
+| 想知道哪里出错了 | 看插件目录下的 **`atk-error.log`**，`[事件]` 是正常记录，`[CRASH]` 才是异常 |
+| 怀疑菜单渲染有问题 | 双击 **`test-menu.cmd`** 做菜单自检 |
+
 ## 实现要点
 
 ### 架构
 
 ```
-atk-worker.ps1（独立子进程）── 每 12 秒读一次 HID ──> status.txt
+atk-worker.ps1（独立子进程）── 每 5 秒读一次 HID ──> status.txt
                                                         ↑
 atk-tray.ps1（托盘 UI）────── 每 250ms 只读这个文件 ─────┘
 ```

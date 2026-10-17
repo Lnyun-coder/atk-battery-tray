@@ -1,6 +1,7 @@
 // ATK 电量 —— 任务栏托盘宿主
 // 编译：csc /target:winexe /out:ATK电量.exe /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll TrayHost.cs
 using System;
+using System.Text;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -32,8 +33,18 @@ static class TrayHost
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        // 全局异常捕获：否则消息循环里的任何异常都会静默杀掉进程
+        Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e)
+        {
+            LogCrash("UI-THREAD", e.Exception);
+        };
+        AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e)
+        {
+            LogCrash("FATAL", e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject.ToString()));
+        };
+
         bool createdNew;
-        using (Mutex mtx = new Mutex(true, "ATKBatteryTray_SingleInstance", out createdNew))
+        using (Mutex mtx = new Mutex(true, @"Local\AtkBatteryTray_SingleInstance", out createdNew))
         {
             if (!createdNew)
             {
@@ -54,19 +65,48 @@ static class TrayHost
 
             var uiTimer = new System.Windows.Forms.Timer();
             uiTimer.Interval = 1500;
-            uiTimer.Tick += delegate { RefreshFromStatus(); };
+            uiTimer.Tick += delegate { try { RefreshFromStatus(); } catch (Exception ex) { LogCrash("UI-TIMER", ex); } };
             uiTimer.Start();
 
             var pollTimer = new System.Windows.Forms.Timer();
             pollTimer.Interval = 20000;
-            pollTimer.Tick += delegate { RequestRefresh(); };
+            pollTimer.Tick += delegate { try { RequestRefresh(); } catch (Exception ex) { LogCrash("POLL-TIMER", ex); } };
             pollTimer.Start();
 
             RefreshFromStatus();
+            LogEvent("STARTUP", "exe 启动 pid=" + System.Diagnostics.Process.GetCurrentProcess().Id);
             Application.Run();
 
+            LogEvent("SHUTDOWN", "正常退出（用户点退出或消息循环结束）");
             StopWorker();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 崩溃日志：与脚本版 atk-tray.ps1 写同一个文件、同一格式
+    // ------------------------------------------------------------------
+    static void LogEvent(string tag, string msg)
+    {
+        try
+        {
+            string p = Path.Combine(stateDir ?? AppDomain.CurrentDomain.BaseDirectory, "atk-error.log");
+            string line = string.Format("[{0:yyyy-MM-dd HH:mm:ss}] [{1}] [{2}] {3}\r\n",
+                                        DateTime.Now, tag, "事件", msg);
+            File.AppendAllText(p, line, new UTF8Encoding(false));
+        }
+        catch { }
+    }
+
+    static void LogCrash(string where, Exception ex)
+    {
+        try
+        {
+            string p = Path.Combine(stateDir ?? AppDomain.CurrentDomain.BaseDirectory, "atk-error.log");
+            string line = string.Format("[{0:yyyy-MM-dd HH:mm:ss}] [CRASH] [{1}] {2}: {3}\r\n{4}\r\n",
+                                        DateTime.Now, where, ex.GetType().Name, ex.Message, ex.StackTrace);
+            File.AppendAllText(p, line, new UTF8Encoding(false));
+        }
+        catch { }
     }
 
     static void BuildMenu()
