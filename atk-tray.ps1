@@ -694,6 +694,49 @@ function New-BatteryIcon {
     return [System.Drawing.Icon]::FromHandle($hIcon)
 }
 
+# ---------------------------------------------------------------------------
+# 图标缓存（关键：防止 GDI 句柄泄漏）
+#
+# New-BatteryIcon 每次都会 Bitmap.GetHicon() 创建新的 HICON 且从不释放。
+# 若每 250ms 都调用一次，约 40 分钟就会耗尽进程 GDI 上限（~10000），
+# 随后图标停止更新、菜单也无法渲染。
+# 这里按 "电量|充电|未连接" 缓存，最多只创建约 100 个图标。
+# ---------------------------------------------------------------------------
+$script:iconCache = @{}
+$script:lastIconKey = ''
+
+function Get-CachedBatteryIcon {
+    param([int]$Battery, [bool]$Charging, [bool]$Unknown, [double]$Phase = 0)
+
+    $key = "$Battery|$Charging|$Unknown"
+    if ($script:iconCache.ContainsKey($key)) { return $script:iconCache[$key] }
+
+    $ico = New-BatteryIcon -Battery $Battery -Charging $Charging -Unknown $Unknown -Phase $Phase
+    $script:iconCache[$key] = $ico
+    return $ico
+}
+
+function Set-TrayIcon {
+    param([int]$Battery, [bool]$Charging, [bool]$Unknown, [double]$Phase = 0)
+
+    $key = "$Battery|$Charging|$Unknown"
+    if ($key -eq $script:lastIconKey) { return }        # 没变化就不动，避免无谓开销
+    try {
+        $script:notify.Icon = Get-CachedBatteryIcon -Battery $Battery -Charging $Charging -Unknown $Unknown -Phase $Phase
+        $script:lastIconKey = $key
+    } catch {
+        Write-ErrLog 'SET-ICON' ("$($_.Exception.GetType().Name): $($_.Exception.Message)")
+    }
+}
+
+function Clear-IconCache {
+    foreach ($k in @($script:iconCache.Keys)) {
+        try { $script:iconCache[$k].Dispose() } catch { }
+    }
+    $script:iconCache = @{}
+    $script:lastIconKey = ''
+}
+
 function Get-BatteryText {
     param($Reading)
     if ($null -eq $Reading -or -not $Reading.Ok) { return 'ATK 鼠标：未连接 / 无数据' }
@@ -911,7 +954,7 @@ $script:ErrLog = Join-Path $PSScriptRoot 'atk-error.log'
 function Write-ErrLog {
     param([string]$Where, $Err)
     try {
-        $tag = if ($Where -match 'STARTUP|MENU-EXIT|SHUTDOWN') { '事件' } else { 'CRASH' }
+        $tag = if ($Where -match 'STARTUP|SHUTDOWN|MENU-EXIT|SHOW-ICON|WORKER-RESTART|BALLOON') { '事件' } else { 'CRASH' }
         $msg = "[{0:yyyy-MM-dd HH:mm:ss}] [{1}] [{2}] {3}" -f (Get-Date), $tag, $Where, $Err
         Add-Content -Path $script:ErrLog -Value $msg -Encoding UTF8 -ErrorAction SilentlyContinue
     } catch { }
@@ -932,11 +975,12 @@ function Invoke-Safe {
 }
 
 $notify = New-Object System.Windows.Forms.NotifyIcon
+$script:notify = $notify   # Set-TrayIcon 内部用
 # 先不显示！图标要等菜单和初始化全部就绪后再显示。
 # 否则图标已出现、菜单还没绑上（中间有 200 多行初始化代码，开机时可能几秒），
 # 这期间右键会弹出空白菜单 —— 这是之前"菜单空白"的根因。
 $notify.Visible = $false
-$notify.Icon = New-BatteryIcon -Battery -1 -Charging $false -Unknown $true
+$notify.Icon = New-BatteryIcon -Battery -1 -Charging $false -Unknown $true   # 初次占位（仅一次）
 $notify.Text = 'ATK 鼠标电量：正在读取…'
 
 
@@ -971,9 +1015,22 @@ function Read-StatusFile {
     try {
         # 文件可能正被写入，重试一次
         $lines = $null
-        for ($try = 0; $try -lt 2; $try++) {
-            try { $lines = Get-Content -Path $script:StatusFile -Encoding UTF8 -ErrorAction Stop; break }
-            catch { Start-Sleep -Milliseconds 30 }
+        # 用 FileShare.ReadWrite 共享读：即使 worker 正在写也不会被锁住
+        for ($try = 0; $try -lt 6; $try++) {
+            try {
+                $fs = [System.IO.File]::Open($script:StatusFile,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::Read,
+                        [System.IO.FileShare]::ReadWrite)
+                try {
+                    $sr = New-Object System.IO.StreamReader($fs)
+                    try { $raw = $sr.ReadToEnd() } finally { $sr.Dispose() }
+                } finally { $fs.Dispose() }
+                if ($raw) { $lines = $raw -split "`r?`n" }
+                break
+            } catch {
+                Start-Sleep -Milliseconds 80
+            }
         }
         if (-not $lines) { return $st }
         foreach ($ln in $lines) {
@@ -1016,18 +1073,37 @@ function Update-Tray {
             $reading.Charging = $script:lastCharging
             $script:lastTs = $st.ts
             $script:curLevel = $reading.Level
-            $notify.Icon = New-BatteryIcon -Battery $reading.Level -Charging $reading.Charging -Unknown $false -Phase $script:phase
+            Set-TrayIcon -Battery $reading.Level -Charging $reading.Charging -Unknown $false -Phase $script:phase
             StartStop-TrayAnimation
             $notify.Text = (Get-BatteryText $reading)
-            if ($st.stale) { $notify.Text = $notify.Text + '（数据较旧，后台读取中…）' }
+            if ($st.stale) {
+                $notify.Text = $notify.Text + '（数据较旧，后台读取中…）'
+                # 超过 90 秒没更新 → 尝试重启 worker。
+                # 注意：必须有冷却时间！Update-Tray 每 250ms 就会跑一次，
+                # 没有冷却会在几秒内启动几十个 worker 进程，拖死整个插件。
+                try {
+                    $now2 = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+                    if ($st.ts -gt 0 -and ($now2 - $st.ts) -gt 90 -and
+                        ($now2 - $script:lastWorkerRestart) -gt 120) {
+                        $script:lastWorkerRestart = $now2
+                        Write-ErrLog 'WORKER-RESTART' "status.txt 已 $($now2 - $st.ts) 秒未更新，重启 worker"
+                        Stop-Worker
+                        Start-Worker
+                        Request-Refresh
+                    }
+                } catch { }
+            }
             if ($VerboseLog) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), (Get-BatteryText $reading)) -ForegroundColor Green }
         } else {
             $script:curLevel = -1
-            $notify.Icon = New-BatteryIcon -Battery -1 -Charging $false -Unknown $true -Phase 0
+            Set-TrayIcon -Battery -1 -Charging $false -Unknown $true
             $notify.Text = 'ATK 鼠标：未连接 / 无数据'
             if ($VerboseLog) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $reading.Error) -ForegroundColor DarkYellow }
         }
     } catch {
+        # 不再静默：任何刷新异常都写日志（之前只在 VerboseLog 下打印，
+        # 导致 GDI 耗尽后图标停止更新却毫无痕迹）
+        Write-ErrLog 'UPDATE-TRAY' ("$($_.Exception.GetType().Name): $($_.Exception.Message)")
         if ($VerboseLog) { Write-Host "读取异常: $($_.Exception.Message)" -ForegroundColor Red }
     } finally {
         $script:busy = $false
@@ -1164,9 +1240,26 @@ Update-Tray
 # 初始化全部完成（菜单已绑、worker 已起、首次数据已读）→ 现在才显示图标
 # 这样用户任何时刻右键都能看到完整菜单，图标一出现就是正确电量
 # ---------------------------------------------------------------------------
-Invoke-Safe 'SHOW-ICON' { $notify.Visible = $true }
-
+# ---------------------------------------------------------------------------
+# 关键：图标不能在 Application.Run() 之前显示！
+# 消息循环还没跑起来时右键图标，WinForms 收不到事件 —— 表现为"菜单空白、点不动"。
+# 所以用一个一次性定时器，等消息循环启动后再显示图标。
+# ---------------------------------------------------------------------------
 Invoke-Safe 'STARTUP' { Write-ErrLog 'STARTUP' "插件启动 pid=$PID" }
+
+$script:showTimer = New-Object System.Windows.Forms.Timer
+$script:showTimer.Interval = 300
+$script:showTimer.add_Tick({
+    $script:showTimer.Stop()
+    $script:showTimer.Dispose()
+    try {
+        $notify.Visible = $true
+        Write-ErrLog 'SHOW-ICON' '图标已显示（消息循环已运行）'
+    } catch {
+        Write-ErrLog 'SHOW-ICON-FAIL' "$($_.Exception.Message)"
+    }
+})
+$script:showTimer.Start()
 if ($LauncherMode) {
     # 双击启动时给个反馈，避免"到底起没起来"的疑惑
     Invoke-Safe 'BALLOON' {

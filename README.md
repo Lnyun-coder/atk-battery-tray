@@ -49,8 +49,8 @@ ATK 官方驱动 **ATK HUB 后台占用较高**，而我只想在任务栏瞄一
 
 | 文件 | 说明 |
 | --- | --- |
-| `atk-battery-tray-v1.0.2.zip` | 完整版，含可选的托盘宿主 `ATKBattery.exe` |
-| `atk-battery-tray-v1.0.2-lite.zip` | 轻量版，纯脚本 |
+| `atk-battery-tray-v1.0.3.zip` | 完整版，含可选的托盘宿主 `ATKBattery.exe` |
+| `atk-battery-tray-v1.0.3-lite.zip` | 轻量版，纯脚本 |
 
 解压到**任意目录**（路径可以含中文），然后**双击 `START.cmd`**。
 
@@ -113,6 +113,7 @@ atk-battery-tray/
 ├── atk-worker.ps1            # 后台读取进程：HID 通信，结果写入 status.txt
 ├── 启动插件.cmd               # 双击启动（发布包里叫 START.cmd）
 ├── restart.cmd               # 一键干净重启（结束残留进程 + 清状态 + 启动）
+├── launch-hidden.vbs         # 完全无窗口启动器（零闪烁）
 ├── watchdog.cmd              # 守护模式启动器
 ├── watchdog.ps1              # 守护脚本：每 30 秒检查，托盘挂了自动拉起
 ├── test-menu.cmd             # 菜单自检工具
@@ -139,6 +140,7 @@ C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe ^
 | --- | --- |
 | 电量显示不对 / 和官方驱动不一致 | 双击 **`restart.cmd`**（结束残留进程 + 清状态 + 重启） |
 | 图标突然消失了 | 双击 **`restart.cmd`**，或用 **`watchdog.cmd`** 启动守护模式自动恢复 |
+| 图标电量不跟着变 | v1.0.2 的 GDI 泄漏已修，升级到 v1.0.3 |
 | 开机后右键菜单空白 | v1.0.2 已修复（图标改为初始化完成后才显示） |
 | 想知道哪里出错了 | 看插件目录下的 **`atk-error.log`**，`[事件]` 是正常记录，`[CRASH]` 才是异常 |
 | 怀疑菜单渲染有问题 | 双击 **`test-menu.cmd`** 做菜单自检 |
