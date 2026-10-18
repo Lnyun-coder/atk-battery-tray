@@ -367,9 +367,20 @@ function Write-Status {
         "error=$Error",
         "ts=$([DateTimeOffset]::Now.ToUnixTimeSeconds())"
     )
-    try {
-        Set-Content -Path $statusFile -Value $lines -Encoding UTF8 -Force
-    } catch { }
+    # 原子写入：先写临时文件再替换。
+    # 直接 Set-Content 在进程被中断时会留下 0 字节的锁定文件，
+    # 导致托盘既读不到新数据、也无法恢复。
+    $tmp = "$statusFile.tmp"
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        try {
+            Set-Content -Path $tmp -Value $lines -Encoding UTF8 -Force -ErrorAction Stop
+            Move-Item -Path $tmp -Destination $statusFile -Force -ErrorAction Stop
+            return
+        } catch {
+            Start-Sleep -Milliseconds 100
+            if ($attempt -eq 2) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
 function Invoke-Poll {
