@@ -19,6 +19,7 @@
 param(
     [int]$IntervalSeconds = 5,
     [switch]$AllowMulti,
+    [switch]$Diagnose,
     [switch]$LauncherMode,
     [switch]$TestMenu,
     [switch]$DryRun,
@@ -34,7 +35,7 @@ Set-StrictMode -Off
 #   互相抢文件会导致图标异常、菜单空白等现象。这里用命名互斥体拦住。
 #   （调试时加 -AllowMulti 可跳过）
 # ---------------------------------------------------------------------------
-if (-not $AllowMulti -and -not $TestMenu) {
+if (-not $AllowMulti -and -not $TestMenu -and -not $Diagnose) {
     if (-not ('AtkSingleInstance' -as [type])) {
         Add-Type -Language CSharp -TypeDefinition @"
 using System;
@@ -405,42 +406,58 @@ public static class AtkHid
                 int inLen = iface.InLen > 0 ? iface.InLen : FRAME_LEN;
                 reading.DeviceName = iface.Name;
 
-                // 接收器用无线帧组，USB 直连用有线帧组
-                byte[][] frames = (iface.Pid == DONGLE_PID) ? KNOWN_FRAMES : WIRED_FRAMES;
-                foreach (byte[] known in frames)
+                // 帧组回退：先按 PID 猜，读不到再换另一组。
+                // （旧代码只用 PID==DONGLE_PID 判断，未知 PID 的接收器会被误判成
+                //   有线设备、用错帧组，结果就是"只显示未连接"。）
+                byte[][] first  = (iface.Pid == DONGLE_PID) ? KNOWN_FRAMES : WIRED_FRAMES;
+                byte[][] second = (iface.Pid == DONGLE_PID) ? WIRED_FRAMES : KNOWN_FRAMES;
+                var frameSets = new byte[][][] { first, second };
+
+                BatteryReading zeroHit = null;
+                bool done = false;
+                foreach (byte[][] frames in frameSets)
                 {
-                    if (budget.ElapsedMilliseconds > TOTAL_MS)
+                    if (done) break;
+                    foreach (byte[] known in frames)
                     {
-                        reading.Error = "读取超时（设备正在切换连接）";
-                        return reading;
-                    }
-                    var replies = Exchange(h, inLen, ToFrame(known));
-                    foreach (byte[] r in replies)
-                    {
-                        // 应答格式: 72 00 3A 00 <addrHi> <addrLo> <data...>
-                        if (r[5] == BAT_ADDR_HI && r[6] == BAT_ADDR_LO && r.Length > 8)
+                        if (budget.ElapsedMilliseconds > TOTAL_MS)
                         {
-                            byte level = r[7];
-                            if (level <= 100)
+                            reading.Error = "读取超时（设备正在切换连接）";
+                            if (zeroHit != null) return zeroHit;
+                            return reading;
+                        }
+                        var replies = Exchange(h, inLen, ToFrame(known));
+                        foreach (byte[] r in replies)
+                        {
+                            // 应答格式: 72 00 3A 00 <addrHi> <addrLo> <data...>
+                            if (r[5] == BAT_ADDR_HI && r[6] == BAT_ADDR_LO && r.Length > 8)
                             {
-                                reading.Ok = true;
-                                reading.Level = level;
-                                // 无线回包 0xFF；有线回包两字节非零 → 统一看后两字节
-                            // 充电判定：
-                            //   无线 —— 仅 0xFF 表示正在充电（回包为 FF FF / 00 00）
-                            //   有线 —— 设备标志字节不可靠，改用系统交流电接入状态
-                            // 充电状态：不再上报。
-                            //   实测无线回包第 8 字节有约 25% 概率误报 0xFF，
-                            //   且无法与「充电底座供电」区分；有线回包该字节含义亦未确认。
-                            //   与其显示错误信息，不如只显示电量百分比。
-                            //   （如将来确认协议含义，把下面这行改成检测逻辑即可）
-                            reading.Charging = false;
-                            int _unusedFlag = r.Length > 8 ? r[8] : 0;
-                                return reading;
+                                byte level = r[7];
+                                if (level <= 100)
+                                {
+                                    reading.Ok = true;
+                                    reading.Level = level;
+                                    // 充电状态不再上报（设备标志字节不可靠）
+                                    reading.Charging = false;
+                                    int _unusedFlag = r.Length > 8 ? r[8] : 0;
+                                    if (level > 0) return reading;   // 非零电量 = 正确帧组
+                                    // 0% 可能是用错帧组（错帧组同样返回 0x00）。
+                                    // 先记住它，继续试另一组；若另一组给出 >0 就用那个。
+                                    if (zeroHit == null)
+                                    {
+                                        zeroHit = new BatteryReading();
+                                        zeroHit.Ok = true; zeroHit.Level = 0; zeroHit.Charging = false;
+                                        zeroHit.DeviceName = reading.DeviceName;
+                                    }
+                                    done = true;
+                                    break;
+                                }
                             }
                         }
+                        if (done) break;
                     }
                 }
+                if (zeroHit != null) return zeroHit;
             }
             finally { CloseHandle(h); }
         }
@@ -744,6 +761,92 @@ function Get-BatteryText {
     # 充电状态已停用（固件标志不可靠），不再附加"充电中"
     # 如将来恢复：if ($Reading.Charging) { $s += '（充电中）' }
     return $s
+}
+
+
+# ---------------------------------------------------------------------------
+# -Diagnose：兼容性诊断
+# 列出所有 VID_373B 的 HID 接口，并分别尝试无线 / 有线两组协议帧，
+# 把原始收发报文全部打印出来。用户遇到"只显示未连接"时，跑这个把输出发回来。
+# ---------------------------------------------------------------------------
+if ($Diagnose) {
+    Write-Host ''
+    Write-Host '========== ATK 电量插件 · 兼容性诊断 ==========' -ForegroundColor Cyan
+    Write-Host ''
+    if (-not ('AtkHid' -as [type])) {
+        Write-Host '  [X] AtkHid 类未加载，脚本可能损坏' -ForegroundColor Red
+        exit 1
+    }
+    Write-Host '[环境]' -ForegroundColor Yellow
+    Write-Host ("  PowerShell : {0}" -f $PSVersionTable.PSVersion)
+    Write-Host ("  OS         : {0}" -f [Environment]::OSVersion.VersionString)
+    Write-Host ("  脚本目录   : {0}" -f $PSScriptRoot)
+    Write-Host ("  worker 存在: {0}" -f (Test-Path (Join-Path $PSScriptRoot 'atk-worker.ps1')))
+    Write-Host ''
+
+    $ifaces = @()
+    try { $ifaces = [AtkHid]::FindCommandInterfaces() } catch { }
+    Write-Host ("[找到 {0} 个带 0xFF05 厂商接口的 ATK 设备]" -f $ifaces.Count) -ForegroundColor Yellow
+    if ($ifaces.Count -eq 0) {
+        Write-Host '  [X] 一个都没找到。可能原因：' -ForegroundColor Red
+        Write-Host '      - 鼠标没开机 / 接收器没插好'
+        Write-Host '      - 不是 ATK 系设备（VID 不是 0x373B）'
+        Write-Host '      - 驱动没装好，厂商接口没暴露'
+        exit 1
+    }
+
+    $donglePid = [AtkHid]::GetDonglePid()
+    foreach ($if in $ifaces) {
+        Write-Host ''
+        Write-Host ("[接口] pid=0x{0:X4}  {1}" -f $if.Pid, $if.Name) -ForegroundColor Yellow
+        Write-Host ("  Path : {0}" -f $if.Path)
+        Write-Host ("  InLen: {0}  OutLen: {1}" -f $if.InLen, $if.OutLen)
+        Write-Host ("  PID  : {0}" -f $(if ($if.Pid -eq $donglePid) { '无线接收器（已知）' } else { '未知 PID（已启用帧组回退）' }))
+
+        $h = [AtkHid]::OpenDevice($if.Path)
+        if ([AtkHid]::IsBadHandle($h)) {
+            Write-Host '  [X] 打开失败（可能被其他程序占用）' -ForegroundColor Red
+            continue
+        }
+        try {
+            $inLen = if ($if.InLen -gt 0) { $if.InLen } else { 64 }
+            $sets = @(
+                @{ name = '无线帧组'; frames = [AtkHid]::GetWirelessFrames() },
+                @{ name = '有线帧组'; frames = [AtkHid]::GetWiredFrames() }
+            )
+            foreach ($set in $sets) {
+                Write-Host ("  --- {0} ---" -f $set.name) -ForegroundColor Gray
+                $hits = 0
+                foreach ($f in $set.frames) {
+                    $hex = ($f | ForEach-Object { $_.ToString('X2') }) -join ' '
+                    $reps = @()
+                    try { $reps = [AtkHid]::Exchange($h, $inLen, [AtkHid]::ToFrame($f)) } catch { }
+                    if ($reps -and $reps.Count -gt 0) {
+                        foreach ($r in $reps) {
+                            $rh = ($r | ForEach-Object { $_.ToString('X2') }) -join ' '
+                            $tag = ''
+                            if ($r.Length -gt 7 -and $r[5] -eq 0x07 -and $r[6] -eq 0x01) {
+                                $tag = "   <<< 电量寄存器! 值=$($r[7])%"
+                                $hits++
+                            }
+                            Write-Host ("     发[{0}]" -f $hex) -ForegroundColor DarkGray
+                            Write-Host ("     收[{0}]{1}" -f $rh, $tag) -ForegroundColor Green
+                        }
+                    } else {
+                        Write-Host ("     发[{0}] -> 无回包" -f $hex) -ForegroundColor DarkGray
+                    }
+                    Start-Sleep -Milliseconds 80
+                }
+                Write-Host ("     小计: 命中电量寄存器 {0} 次" -f $hits)
+            }
+        } finally { [AtkHid]::CloseDevice($h) }
+    }
+
+    Write-Host ''
+    Write-Host '========== 诊断结束 ==========' -ForegroundColor Cyan
+    Write-Host ' 请把以上完整输出（含 发/收 开头的报文）贴给开发者。' -ForegroundColor Gray
+    Write-Host ' 出现「电量寄存器! 值=xx%」说明该帧组可用。' -ForegroundColor Gray
+    exit 0
 }
 
 if ($DryRun) {
